@@ -4,6 +4,8 @@ pydantic<3,>=2.6
 numpy<2,>=1.26
 pandas<3,>=2.2
 httpx<1,>=0.27
+pyarrow>=21.0.0
+fastparquet>=2024.11.0
 
 [astro]
 lightkurve<3,>=2.4

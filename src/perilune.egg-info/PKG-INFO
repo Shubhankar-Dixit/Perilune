@@ -12,6 +12,8 @@ Requires-Dist: pydantic<3,>=2.6
 Requires-Dist: numpy<2,>=1.26
 Requires-Dist: pandas<3,>=2.2
 Requires-Dist: httpx<1,>=0.27
+Requires-Dist: pyarrow>=21.0.0
+Requires-Dist: fastparquet>=2024.11.0
 Provides-Extra: astro
 Requires-Dist: lightkurve<3,>=2.4; extra == "astro"
 Requires-Dist: astropy<7,>=6; extra == "astro"
@@ -39,3 +41,10 @@ End-to-end exoplanet transit discovery and explanation on open NASA data.
 3. Download and cache a light curve with Lightkurve (writes JSON under `data/raw/lightcurves/`):
    `uv run python -m src.pipelines.lightcurves KOI-0001 --mission kepler`
 4. (Optional) Once the BLS implementation is swapped from the placeholder, call `/api/predict` with `dryRun=false` to exercise the full pipeline.
+5. Harmonise the catalogues into `data/processed/catalog_merged.csv`:
+   `uv run python -m src.pipelines.catalogs --output data/processed/catalog_merged.csv`
+6. Build the modeling feature table (optionally pointing to a directory of BLS JSON outputs):
+   `uv run python -m src.pipelines.features --catalog data/processed/catalog_merged.csv --output data/processed/features.parquet`
+7. Train the baseline model (requires `uv sync --extra ml` once):
+   `uv run python -m src.models.baseline --features data/processed/features.parquet --output-dir artifacts/baseline`
+   - The API automatically looks for artifacts under `artifacts/baseline` (override with `PERILUNE_BASELINE_DIR`).
