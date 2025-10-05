@@ -2,7 +2,6 @@ from fastapi.testclient import TestClient
 
 from src.api.main import app
 
-
 client = TestClient(app)
 
 
@@ -30,6 +29,26 @@ def test_search_transits_endpoint() -> None:
 def test_predict_rejects_length_mismatch() -> None:
     response = client.post(
         "/api/predict",
-        json={"times": [0.0, 1.0], "flux": [1.0], "dryRun": True},
+        json={"times": [0.0, 1.0], "flux": [1.0], "mission": "kepler", "dryRun": True},
+    )
+    assert response.status_code == 422
+
+
+def test_predict_times_flux_with_mission() -> None:
+    times = [float(i) for i in range(5)]
+    flux = [1.0] * 5
+    response = client.post(
+        "/api/predict",
+        json={"times": times, "flux": flux, "mission": "kepler", "dryRun": True},
+    )
+    assert response.status_code == 200
+
+
+def test_predict_requires_mission_for_series() -> None:
+    times = [0.0, 1.0]
+    flux = [1.0, 1.0]
+    response = client.post(
+        "/api/predict",
+        json={"times": times, "flux": flux, "dryRun": True},
     )
     assert response.status_code == 422

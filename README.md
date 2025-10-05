@@ -16,3 +16,8 @@ End-to-end exoplanet transit discovery and explanation on open NASA data.
 4. (Optional) Once the BLS implementation is swapped from the placeholder, call `/api/predict` with `dryRun=false` to exercise the full pipeline.
 5. Harmonise the catalogues into `data/processed/catalog_merged.csv`:
    `uv run python -m src.pipelines.catalogs --output data/processed/catalog_merged.csv`
+6. Build the modeling feature table (optionally pointing to a directory of BLS JSON outputs):
+   `uv run python -m src.pipelines.features --catalog data/processed/catalog_merged.csv --output data/processed/features.parquet`
+7. Train the baseline model (requires `uv sync --extra ml` once):
+   `uv run python -m src.models.baseline --features data/processed/features.parquet --output-dir artifacts/baseline`
+   - The API automatically looks for artifacts under `artifacts/baseline` (override with `PERILUNE_BASELINE_DIR`).

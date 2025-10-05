@@ -31,14 +31,14 @@ Owner: perilune team
 - CLI: `uv run python -m src.pipelines.fetch_data --table koi` etc.
 
 3) M2 Baseline calibrated ensemble (2–4 days)
-- Feature builder unifying table + BLS features; mission normalization.
-- Train LightGBM/XGBoost with class weights; fit a probability calibrator.
+- Feature builder unifying table + BLS features; mission normalization (done).
+- Train calibrated baseline classifier (LogReg for v0, upgradeable to LightGBM/XGBoost) with class weights; fit a probability calibrator.
 - Evaluate PR-AUC, F1; confusion by mission; select operating thresholds.
 - Export artifacts to `artifacts/mission_model-v1/`.
 
 4) M3 API + minimal UI (2 days)
 - FastAPI endpoints:
-  - `POST /api/predict` (payload: KOI/TOI/K2 ID or times/flux array) -> calibrated probability + evidence summary.
+  - `POST /api/predict` (payload: KOI/TOI/K2 ID or times/flux array) -> calibrated probability + evidence summary; falls back to heuristic if the baseline model is unavailable.
   - `GET /api/object/{id}` -> merged mission metadata + latest classification.
   - `POST /api/search-transits` -> run BLS and return periodogram + phase-folded points.
 - Next.js pages for search/upload and a discovery canvas (charts + summary chips).
