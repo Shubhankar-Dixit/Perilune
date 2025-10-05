@@ -2,6 +2,7 @@ import "../styles/globals.css";
 import type { Metadata } from "next";
 import TopNav from "../components/TopNav";
 import { Inter, Playfair_Display } from "next/font/google";
+import BackgroundOrbits from "../components/BackgroundOrbits";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -31,6 +32,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${display.variable}`}>
       <body>
+        <BackgroundOrbits />
         <TopNav />
         <div className="container" style={{ paddingTop: "1.25rem", paddingBottom: "2rem" }}>
           {children}

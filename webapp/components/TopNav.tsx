@@ -12,12 +12,10 @@ export default function TopNav() {
         </Link>
         <div style={{ flex: 1 }} />
         <div className="topnav-links">
-          <Link href="#features">Features</Link>
-          <Link href="#workspace">Workspace</Link>
-          <Link href="#docs">Docs</Link>
-          <Link href="#start" className="button primary" aria-label="Get started">
-            Get started
-          </Link>
+          <Link href="/about">About</Link>
+          <Link href="/how-it-works">How it works</Link>
+          <Link href="https://github.com" target="_blank" rel="noreferrer">Docs</Link>
+          <Link href="/" className="button primary" aria-label="Open app">Open app</Link>
         </div>
       </div>
     </nav>

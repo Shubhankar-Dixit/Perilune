@@ -3,7 +3,9 @@
 import { useState, useTransition } from "react";
 import { PredictionForm } from "../components/PredictionForm";
 import { PredictionResult } from "../components/PredictionResult";
-import { GraphPlaceholder } from "../components/GraphPlaceholder";
+import { LightCurveGraph } from "../components/LightCurveGraph";
+import { PeriodogramGraph } from "../components/PeriodogramGraph";
+import { PhaseFoldedGraph } from "../components/PhaseFoldedGraph";
 import { DataTablePlaceholder } from "../components/DataTablePlaceholder";
 import { NotesPanel } from "../components/NotesPanel";
 import { predictByObjectId, predictBySeries, type PredictResponse } from "../lib/api";
@@ -12,6 +14,7 @@ export default function HomePage() {
   const [result, setResult] = useState<PredictResponse | null>(null);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [series, setSeries] = useState<{ times: number[] | null; flux: number[] | null }>({ times: null, flux: null });
 
   const handleCatalog = async (objectId: string, mission: string) => {
     startTransition(async () => {
@@ -19,6 +22,7 @@ export default function HomePage() {
         setError(null);
         const prediction = await predictByObjectId(objectId, mission);
         setResult(prediction);
+        setSeries({ times: null, flux: null });
       } catch (err) {
         console.error(err);
         setError(err instanceof Error ? err.message : "Prediction failed");
@@ -32,6 +36,7 @@ export default function HomePage() {
         setError(null);
         const prediction = await predictBySeries(times, flux, mission);
         setResult(prediction);
+        setSeries({ times, flux });
       } catch (err) {
         console.error(err);
         setError(err instanceof Error ? err.message : "Prediction failed");
@@ -67,9 +72,8 @@ export default function HomePage() {
               <p>{error}</p>
             </section>
           ) : null}
-
-          <GraphPlaceholder title="Light Curve" height={260} />
-          <GraphPlaceholder title="BLS Periodogram" height={220} />
+          <LightCurveGraph title="Light Curve" height={260} times={series.times} flux={series.flux} features={result?.features ?? null} />
+          <PeriodogramGraph title="BLS Periodogram" height={220} features={result?.features ?? null} />
           {result ? (
             <PredictionResult result={result} />
           ) : (
@@ -80,7 +84,7 @@ export default function HomePage() {
               </p>
             </section>
           )}
-          <GraphPlaceholder title="Phase‑folded Plot" height={220} />
+          <PhaseFoldedGraph title="Phase‑folded Plot" height={220} times={series.times} flux={series.flux} features={result?.features ?? null} />
         </div>
       </div>
     </main>
