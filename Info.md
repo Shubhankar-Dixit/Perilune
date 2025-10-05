@@ -24,8 +24,8 @@ Space-based surveys such as Kepler, K2, and TESS detect exoplanets via the trans
 Two complementary models share common preprocessing and evaluation:
 
 1) Ensemble Tabular Baseline (ships first)
-- Inputs: mission table fields (period, duration, depth proxies, stellar Teff/logg/R, crowding/centroid flags) + fast BLS features (periodogram SDE, best period, odd/even depth ratio, secondary scan flags).
-- Model: Gradient-boosted trees (LightGBM/XGBoost) with class weighting and probability calibration (isotonic/Platt).
+- Inputs: mission table fields (period, duration, depth proxies, stellar Teff/logg/R, crowding/centroid flags) + BLS features (SNR, SDE, best period/duration/depth, odd/even proxy, secondary flag).
+- Model: LightGBM with 5-fold isotonic calibration; class weighting.
 - Why: Strong accuracy with limited compute, interpretable feature importances, robust to missingness.
 
 2) Hybrid Deep Classifier (stretch)
@@ -52,7 +52,7 @@ Two complementary models share common preprocessing and evaluation:
 # Deliverables
 
 - Reproducible data loaders and feature builders under `src/pipelines/` with CLI entry points.
-- Baseline calibrated ensemble model with saved artifacts, feature schema, and evaluation report.
+- Baseline calibrated ensemble model (LightGBM) with saved artifacts, feature schema, and evaluation report; logistic baseline retained for comparison.
 - API server with the three endpoints above and JSON contracts.
 - Web UI implementing the discovery canvas and explain panel.
 - Documentation: model card, data documentation, and setup instructions.

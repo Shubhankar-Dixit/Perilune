@@ -11,23 +11,50 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from src.pipelines.bls import BLSConfig, BLSResult, run_bls
 from src.pipelines.lightcurves import LightcurveFetchConfig, fetch_lightcurve
 
-try:  # Baseline model is optional
-    from src.models.baseline import BaselinePredictor
-except RuntimeError:  # pragma: no cover - scikit-learn not installed
+try:  # Optional predictors
+    from src.models.gbm import GBMPredictor  # type: ignore
+except Exception:  # pragma: no cover
+    GBMPredictor = None  # type: ignore
+try:
+    from src.models.baseline import BaselinePredictor  # type: ignore
+except Exception:  # pragma: no cover
     BaselinePredictor = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
+GBM_ARTIFACT_DIR = Path(os.getenv("PERILUNE_GBM_DIR", "artifacts/gbm-v1"))
 BASELINE_ARTIFACT_DIR = Path(os.getenv("PERILUNE_BASELINE_DIR", "artifacts/baseline"))
 FEATURE_TABLE_PATH = Path(os.getenv("PERILUNE_FEATURE_TABLE", "data/processed/features.parquet"))
-BASELINE_THRESHOLD = float(os.getenv("PERILUNE_BASELINE_THRESHOLD", "0.5"))
+# Threshold is resolved at runtime: env override > model metadata > default 0.5
+ENV_THRESHOLD = os.getenv("PERILUNE_BASELINE_THRESHOLD")
+# In production, avoid silently falling back to synthetic data.
+ALLOW_SYNTHETIC_FALLBACK = os.getenv("PERILUNE_ALLOW_SYNTHETIC_FALLBACK", "false").lower() in {"1", "true", "yes"}
 
 app = FastAPI(title="Perilune API", version="0.0.1")
+
+# CORS for local Next.js frontend
+_cors_env = os.getenv("PERILUNE_CORS_ORIGINS")
+if _cors_env:
+    _allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    _allowed_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"]
+)
 
 
 class PredictRequest(BaseModel):
@@ -35,7 +62,7 @@ class PredictRequest(BaseModel):
     times: list[float] | None = None
     flux: list[float] | None = None
     mission: str | None = None
-    dry_run: bool = Field(default=True, alias="dryRun")
+    dry_run: bool = Field(default=False, alias="dryRun")
 
     @model_validator(mode="after")
     def validate_inputs(self) -> "PredictRequest":
@@ -70,7 +97,7 @@ class PredictResponse(BaseModel):
 class SearchTransitsRequest(BaseModel):
     times: list[float] = Field(..., min_length=2)
     flux: list[float] = Field(..., min_length=2)
-    dry_run: bool = Field(default=True, alias="dryRun")
+    dry_run: bool = Field(default=False, alias="dryRun")
 
     @field_validator("flux")
     @classmethod
@@ -93,16 +120,22 @@ class ObjectResponse(BaseModel):
 
 
 @lru_cache(maxsize=1)
-def _get_baseline_predictor() -> BaselinePredictor | None:
-    if BaselinePredictor is None:
-        return None
-    if not BASELINE_ARTIFACT_DIR.exists():
-        return None
-    try:
-        return BaselinePredictor(BASELINE_ARTIFACT_DIR)
-    except Exception as exc:  # pragma: no cover - optional dependency failures
-        logger.warning("Failed to load baseline model: %s", exc)
-        return None
+def _get_best_predictor() -> tuple[object | None, str | None]:
+    # Prefer GBM if available
+    if GBMPredictor is not None and GBM_ARTIFACT_DIR.exists():
+        try:
+            gbm = GBMPredictor(GBM_ARTIFACT_DIR)
+            return gbm, getattr(gbm, "model_name", "gbm")
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Failed to load GBM predictor: %s", exc)
+    # Fallback to logistic baseline
+    if BaselinePredictor is not None and BASELINE_ARTIFACT_DIR.exists():
+        try:
+            base = BaselinePredictor(BASELINE_ARTIFACT_DIR)
+            return base, "baseline-logistic"
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Failed to load baseline predictor: %s", exc)
+    return None, None
 
 
 @lru_cache(maxsize=1)
@@ -161,16 +194,16 @@ def _merge_bls_into_features(feature_row: dict[str, Any], result: BLSResult) -> 
     feature_row["bls_snr"] = result.snr
 
 
-def _predict_with_baseline(feature_row: dict[str, Any], fallback: float) -> tuple[float, str]:
-    predictor = _get_baseline_predictor()
+def _predict_with_model(feature_row: dict[str, Any], fallback: float) -> tuple[float, str | None]:
+    predictor, name = _get_best_predictor()
     if predictor is None or not feature_row:
-        return fallback, "heuristic"
+        return fallback, None
     try:
-        probability = predictor.predict_proba(feature_row)
-        return probability, "baseline"
+        probability = predictor.predict_proba(feature_row)  # type: ignore[attr-defined]
+        return float(probability), name
     except Exception as exc:  # pragma: no cover - inference errors
-        logger.warning("Baseline prediction failed: %s", exc)
-        return fallback, "heuristic"
+        logger.warning("Model prediction failed: %s", exc)
+        return fallback, None
 
 
 def _run_placeholder_bls(times: list[float], flux: list[float], dry_run: bool) -> BLSResult:
@@ -190,6 +223,7 @@ async def predict(request: PredictRequest) -> PredictResponse:
 
     feature_row: dict[str, Any] = {}
     bls_dry_run = dry_run
+    used_synthetic = False
 
     if request.object_id:
         lc_config = LightcurveFetchConfig(
@@ -200,7 +234,7 @@ async def predict(request: PredictRequest) -> PredictResponse:
         try:
             lightcurve = fetch_lightcurve(lc_config)
         except Exception as exc:
-            if not dry_run:
+            if not dry_run and ALLOW_SYNTHETIC_FALLBACK:
                 logger.warning(
                     "Falling back to synthetic light curve for %s (%s)", request.object_id, exc
                 )
@@ -211,10 +245,14 @@ async def predict(request: PredictRequest) -> PredictResponse:
                 )
                 lightcurve = fetch_lightcurve(lc_config)
                 bls_dry_run = True
+                used_synthetic = True
             else:
-                raise
+                logger.error("Light curve fetch failed for %s: %s", request.object_id, exc)
+                raise HTTPException(status_code=502, detail=f"Failed to fetch light curve: {exc}")
         times = lightcurve.times_days
         flux = lightcurve.flux_normalised
+        if lightcurve.metadata.get("source") == "synthetic":
+            used_synthetic = True
         catalog_row = _lookup_feature_row(request.object_id)
         if catalog_row:
             feature_row.update({k: v for k, v in catalog_row.items() if k != "label"})
@@ -246,22 +284,53 @@ async def predict(request: PredictRequest) -> PredictResponse:
         f"Depth {features.depth_ppm:.0f} ppm",
         f"SNR {features.snr:.1f}",
     ]
+    # Optional extra diagnostics if present
+    if isinstance(result.diagnostics, dict) and result.diagnostics.get("sde") is not None:
+        try:
+            evidence.append(f"SDE {float(result.diagnostics['sde']):.1f}")
+        except Exception:  # pragma: no cover
+            pass
+    if getattr(result, "secondary_flag", None):
+        evidence.append("Secondary at ~0.5 phase suspected")
+    if used_synthetic or bls_dry_run:
+        evidence.append("Synthetic data path used (fallback or dry-run)")
 
     fallback_probability = min(features.snr / 20.0, 0.99)
+    model_name: str | None = None
     if dry_run:
-        probability, source = fallback_probability, "heuristic"
+        probability, model_name = fallback_probability, None
     else:
-        probability, source = _predict_with_baseline(feature_row, fallback_probability)
-        if source == "baseline":
-            evidence.append(
-                f"Baseline model probability {probability:.2f} (threshold {BASELINE_THRESHOLD:.2f})"
-            )
+        probability, model_name = _predict_with_model(feature_row, fallback_probability)
+        if model_name:
+            # Determine threshold for messaging
+            predictor, _ = _get_best_predictor()
+            thr = 0.5
+            if ENV_THRESHOLD is not None:
+                try:
+                    thr = float(ENV_THRESHOLD)
+                except Exception:
+                    thr = 0.5
+            elif predictor is not None:
+                thr = float(getattr(predictor, "threshold", 0.5))
+            evidence.append(f"Model {model_name} probability {probability:.2f} (threshold {thr:.2f})")
 
-    label = "planet-candidate" if probability >= BASELINE_THRESHOLD else "false-positive"
+    # Final decision threshold resolution
+    decision_threshold = 0.5
+    if ENV_THRESHOLD is not None:
+        try:
+            decision_threshold = float(ENV_THRESHOLD)
+        except Exception:
+            decision_threshold = 0.5
+    else:
+        predictor, _ = _get_best_predictor()
+        if predictor is not None:
+            decision_threshold = float(getattr(predictor, "threshold", 0.5))
+
+    label = "planet-candidate" if probability >= decision_threshold else "false-positive"
     return PredictResponse(
         label=label,
         probability=probability,
-        threshold=BASELINE_THRESHOLD,
+        threshold=decision_threshold,
         features=features,
         evidence=evidence,
     )

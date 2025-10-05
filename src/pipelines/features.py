@@ -73,6 +73,9 @@ def _load_bls_directory(directory: Path) -> pd.DataFrame:
             "bls_depth_ppm": payload.get("depth_ppm"),
             "bls_epoch_bjd": payload.get("epoch_bjd"),
             "bls_snr": payload.get("snr"),
+            "bls_sde": payload.get("sde"),
+            "bls_odd_even_ratio": payload.get("odd_even_ratio"),
+            "bls_secondary_flag": payload.get("secondary_flag"),
         }
 
         diagnostics = payload.get("diagnostics") or {}
@@ -146,4 +149,3 @@ def main(argv: list[str] | None = None) -> Path:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-

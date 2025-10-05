@@ -21,3 +21,23 @@ End-to-end exoplanet transit discovery and explanation on open NASA data.
 7. Train the baseline model (requires `uv sync --extra ml` once):
    `uv run python -m src.models.baseline --features data/processed/features.parquet --output-dir artifacts/baseline`
    - The API automatically looks for artifacts under `artifacts/baseline` (override with `PERILUNE_BASELINE_DIR`).
+8. Train the GBM model (recommended):
+   `uv run python -m src.models.gbm --features data/processed/features.parquet --output-dir artifacts/gbm-v1`
+   - The API prefers `artifacts/gbm-v1` if present (override with `PERILUNE_GBM_DIR`).
+
+## Frontend
+
+Inside `webapp/` run:
+
+```bash
+npm install
+npm run dev
+```
+
+Set `NEXT_PUBLIC_PERILUNE_API` to the FastAPI base URL when calling a remote backend.
+
+## API runtime notes
+
+- By default the API treats requests as non-dry-run (`dryRun` defaults to `false`).
+- If Lightkurve or network lookups fail during `/api/predict` with `dryRun=false`, the server now returns `HTTP 502` instead of silently switching to synthetic data.
+- To allow a development-only fallback to synthetic light curves on failures, set `PERILUNE_ALLOW_SYNTHETIC_FALLBACK=true`. When a fallback or explicit dry-run is used, the response `evidence` includes: "Synthetic data path used (fallback or dry-run)".

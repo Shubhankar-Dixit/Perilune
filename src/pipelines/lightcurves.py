@@ -6,6 +6,8 @@ import argparse
 import json
 import logging
 from dataclasses import dataclass
+import re
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -77,29 +79,53 @@ def fetch_lightcurve(config: LightcurveFetchConfig) -> LightcurveData:
     output_dir = config.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Searching Lightkurve for %s (%s)", config.object_id, mission_name)
-    search = search_lightcurve(config.object_id, mission=mission_name)
-    if search is None or len(search) == 0:
-        raise RuntimeError(f"No light curves found for {config.object_id} ({mission_name})")
+    # Build candidate identifiers to improve match robustness
+    raw_id = str(config.object_id).strip()
+    candidates: list[str] = [raw_id]
+    if mission_name == "Kepler":
+        if re.fullmatch(r"\d+", raw_id):
+            candidates.insert(0, f"KIC {raw_id}")
+    elif mission_name == "K2":
+        if re.fullmatch(r"\d+", raw_id):
+            candidates.insert(0, f"EPIC {raw_id}")
+    elif mission_name == "TESS":
+        if re.fullmatch(r"\d+", raw_id):
+            candidates.insert(0, f"TIC {raw_id}")
 
-    logger.info("Found %d light curve file(s); downloading...", len(search))
-    collection = search.download_all(download_dir=str(output_dir))
-    if collection is None:
-        raise RuntimeError(f"Failed to download light curves for {config.object_id}")
+    # Retry search/download on transient backend errors
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
+        for oid in candidates:
+            logger.info("Searching Lightkurve for %s (%s)", oid, mission_name)
+            try:
+                search = search_lightcurve(oid, mission=mission_name)
+                if search is None or len(search) == 0:
+                    continue
+                logger.info("Found %d light curve file(s); downloading...", len(search))
+                collection = search.download_all(download_dir=str(output_dir))
+                if collection is not None:
+                    stitched = collection.stitch()
+                    cleaned = stitched.remove_nans().normalize()
 
-    stitched = collection.stitch()
-    cleaned = stitched.remove_nans().normalize()
+                    times = cleaned.time.value.tolist()
+                    flux = cleaned.flux.value.tolist()
+                    metadata = {
+                        "object_id": raw_id,
+                        "mission": config.mission,
+                        "n_files": len(collection),
+                        "query_id": oid,
+                        "source": "lightkurve",
+                    }
+                    return LightcurveData(times_days=times, flux_normalised=flux, metadata=metadata)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                logger.warning("Light curve fetch attempt %d failed for %s: %s", attempt, oid, exc)
+        time.sleep(min(2 * attempt, 6))
 
-    times = cleaned.time.value.tolist()
-    flux = cleaned.flux.value.tolist()
-
-    metadata = {
-        "object_id": config.object_id,
-        "mission": config.mission,
-        "n_files": len(collection),
-        "source": "lightkurve",
-    }
-    return LightcurveData(times_days=times, flux_normalised=flux, metadata=metadata)
+    if last_exc is not None:
+        raise RuntimeError(f"Failed to download light curves for {raw_id} after retries: {last_exc}")
+    raise RuntimeError(f"No light curves found for {raw_id} ({mission_name})")
+    
 
 
 def save_lightcurve(data: LightcurveData, output_dir: Path, filename: str | None = None) -> Path:

@@ -54,18 +54,60 @@ NUMERIC_FEATURES: Sequence[str] = (
     "bls_best_duration_hours",
     "bls_depth_ppm",
     "bls_snr",
+    "bls_sde",
+    "bls_odd_even_ratio",
 )
 
 CATEGORICAL_FEATURES: Sequence[str] = ("mission",)
 
 
 def load_features(path: Path) -> pd.DataFrame:
+    """Load features from a parquet/csv path; lazily build if missing.
+
+    If the requested feature file does not exist and a processed catalog is present
+    at data/processed/catalog_merged.csv, attempt to build the feature table on the fly
+    using src.pipelines.features.
+    """
+    path = path.expanduser()
     suffix = path.suffix.lower()
-    if suffix == ".parquet":
-        return pd.read_parquet(path)
-    if suffix == ".csv":
-        return pd.read_csv(path)
-    raise ValueError(f"Unsupported feature file format: {path}")
+
+    if path.exists():
+        if suffix == ".parquet":
+            return pd.read_parquet(path)
+        if suffix == ".csv":
+            return pd.read_csv(path)
+        raise ValueError(f"Unsupported feature file format: {path}")
+
+    default_catalog = Path("data/processed/catalog_merged.csv")
+    if default_catalog.exists() and suffix in {".parquet", ".csv"}:
+        try:
+            from src.pipelines.features import FeatureBuilderConfig, build_features
+
+            fmt = "parquet" if suffix == ".parquet" else "csv"
+            logger.info(
+                "Feature file %s not found; building from %s (format=%s)", path, default_catalog, fmt
+            )
+            build_features(
+                FeatureBuilderConfig(
+                    catalog_path=default_catalog,
+                    bls_dir=None,
+                    output_path=path,
+                    output_format=fmt,
+                )
+            )
+            if suffix == ".parquet":
+                return pd.read_parquet(path)
+            return pd.read_csv(path)
+        except Exception as exc:  # pragma: no cover - runtime guard
+            raise FileNotFoundError(
+                f"Feature file not found at {path} and auto-build failed: {exc}. "
+                f"Generate it with: uv run python -m src.pipelines.features --catalog {default_catalog} --output {path}"
+            ) from exc
+
+    raise FileNotFoundError(
+        f"Feature file not found at {path}. Generate it first with: "
+        f"uv run python -m src.pipelines.features --catalog data/processed/catalog_merged.csv --output {path}"
+    )
 
 
 def train_baseline(config: TrainConfig) -> dict[str, float | dict[str, Any]]:
@@ -75,11 +117,24 @@ def train_baseline(config: TrainConfig) -> dict[str, float | dict[str, Any]]:
     df = load_features(config.features_path)
     logger.info("Loaded %d rows from %s", len(df), config.features_path)
 
-    label_map = {
-        config.positive_label: 1,
-        config.negative_label: 0,
-    }
+    # Normalize labels to canonical forms to support upstream variations
+    # e.g., "CANDIDATE" -> "planet-candidate", "FALSE POSITIVE" -> "false-positive"
+    label_series = df["label"].astype(str).str.strip().str.lower()
+    label_series = label_series.str.replace(r"[\s_]+", "-", regex=True)
+    label_series = label_series.replace({
+        "candidate": "planet-candidate",
+        "falsepositive": "false-positive",
+        "fp": "false-positive",
+    })
+
+    label_map = {config.positive_label: 1, config.negative_label: 0}
+    df = df.assign(label=label_series)
     df = df[df["label"].isin(label_map.keys())].copy()
+    if df.empty:
+        raise ValueError(
+            "No samples with recognized labels after normalization. "
+            "Expected labels like 'planet-candidate' or 'false-positive'."
+        )
     df["target"] = df["label"].map(label_map)
 
     feature_columns = [col for col in NUMERIC_FEATURES if col in df.columns] + list(CATEGORICAL_FEATURES)

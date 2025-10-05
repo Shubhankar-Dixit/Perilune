@@ -115,3 +115,11 @@ Runs BLS and returns a periodogram, best period/epoch, and a phase-folded series
 - Implement `src/pipelines/bls` + tests using small fixtures.
 - Draft API stubs and a mock UI binding to those stubs.
 
+
+\r
+## Model v1 (updated Oct 5, 2025)
+- Preferred baseline: LightGBM + isotonic calibration over mission + BLS features (period/duration/depth, BLS SNR/SDE, odd_even_ratio, secondary_flag).
+- Train via: uv run python -m src.models.gbm --features data/processed/features.parquet --output-dir artifacts/gbm-v1.
+- API preference: rtifacts/gbm-v1 > rtifacts/baseline.
+- Metrics to report: PR-AUC (primary), ROC-AUC, reliability/ECE, confusion by mission; optimize threshold for desired recall.
+
