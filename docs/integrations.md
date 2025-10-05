@@ -6,7 +6,8 @@ This document lists the external data sources and services used by Perilune.
 - Usage: fetch KOI, K2, and TOI tables via the public API/TAP endpoints.
 - TAP table names: `koi`, `k2pandc`, `toi`.
 - Example query: `SELECT TOP 5000 kepid,koi_disposition FROM koi` with `format=csv`.
-- We rely on the following disposition columns: KOI Disposition Using Kepler Data (`koi_disposition`), K2 Archive Disposition (`k2_disposition`), TOI TFOPWG Disposition (`tfopwg_disp`).
+- We rely on the following disposition columns: KOI Disposition Using Kepler Data (`koi_disposition`), K2 Archive Disposition (`disposition`), TOI TFOPWG Disposition (`tfopwg_disp`).
+- Note: K2 transit depth (`pl_trandep`) is reported in percent; convert to ppm by multiplying by 1e4 before merging with other missions.
 - Store raw responses in `data/raw/` and record the query used for provenance.
 
 ## Light Curves

@@ -4,5 +4,5 @@ __all__ = [
     "fetch_data",
     "lightcurves",
     "bls",
+    "catalogs",
 ]
-
