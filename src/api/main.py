@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import asyncio
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -232,7 +233,7 @@ async def predict(request: PredictRequest) -> PredictResponse:
             dry_run=dry_run,
         )
         try:
-            lightcurve = fetch_lightcurve(lc_config)
+            lightcurve = await asyncio.to_thread(fetch_lightcurve, lc_config)
         except Exception as exc:
             if not dry_run and ALLOW_SYNTHETIC_FALLBACK:
                 logger.warning(
@@ -243,7 +244,7 @@ async def predict(request: PredictRequest) -> PredictResponse:
                     mission=mission.lower(),
                     dry_run=True,
                 )
-                lightcurve = fetch_lightcurve(lc_config)
+                lightcurve = await asyncio.to_thread(fetch_lightcurve, lc_config)
                 bls_dry_run = True
                 used_synthetic = True
             else:
@@ -262,7 +263,7 @@ async def predict(request: PredictRequest) -> PredictResponse:
     else:  # pragma: no cover - validated already
         raise HTTPException(status_code=422, detail="Missing input data")
 
-    result = _run_placeholder_bls(times, flux, dry_run=bls_dry_run)
+    result = await asyncio.to_thread(_run_placeholder_bls, times, flux, bls_dry_run)
     if not feature_row:
         feature_row.update(_build_feature_row_from_bls(mission, result))
     feature_row.setdefault("mission", mission)
